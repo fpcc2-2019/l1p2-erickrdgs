@@ -33,23 +33,35 @@ buscas = read_csv(here::here("data/search_data.csv.1"))
 ##What is our daily overall clickthrough rate? How does it vary between the groups?
 
 ```{r}
-
 buscas %>%
     group_by(date = substr(session_start_date, 1, 10), group) %>%
-    summarise(mean_clicks = mean(num_clicks)) %>%
+    mutate(mean_clicks = mean(num_clicks)) %>%
     ggplot(aes(x = date, y = mean_clicks, color = group, group = group)) +
     geom_point(show.legend = FALSE) +
     geom_line() +
-    labs(title = "daily clickthrough rate", x = "", y = "clickthrough rate") +
+    labs(title = "Daily clickthrough rate", x = "", y = "clickthrough rate") +
     theme(axis.text.x = element_text(hjust = 1, angle = 45))
-    
-
 ```
 
 ##Which results do people tend to try first? How does it change day-to-day?
 
 ```{r}
+buscas %>%
+    filter(first_click < 20) %>%
+    group_by(date = substr(session_start_date, 1, 10)) %>%
+    ggplot(aes(x = first_click)) +
+    geom_bar()
 ```
+
+```{r}
+#95% percentil, desvio padrão
+
+buscas %>%
+    summary(first_click)
+    
+
+```
+
 
 ##What is our daily overall zero results rate? How does it vary between the groups?
 
@@ -57,20 +69,23 @@ buscas %>%
 buscas %>%
     group_by(date = substr(session_start_date, 1, 10), group) %>%
     summarise(mean_zero = mean(results == 0)) %>%
-    ggplot(aes(x = mean_zero, y = date)) +
+    ggplot(aes(x = date, y = mean_zero, color = group, group = group)) +
     geom_point(show.legend = FALSE) +
-    labs(title = "daily zero results rate", x = "", y = "")
+    geom_line(show.legend = FALSE) +
+    labs(title = "Daily overall zero results rate", x = "", y = "zero results %") +
+    theme(axis.text.x = element_text(hjust = 1, angle = 45)) +
+    facet_wrap(~group)
 ```
 
 ##Let session length be approximately the time between the first event and the last event in a session. Choose a variable from the dataset and describe its relationship to session length. Visualize the relationship.
 
 ```{r}
 
-```
-
-##Summarize your findings in an executive summary.
-
-```{r}
+buscas %>%
+    filter(session_length != 0) %>%
+    group_by(date = substr(session_start_date, 1, 10)) %>%
+    ggplot(aes(x = session_length, y = search_index)) +
+    geom_point()
 
 ```
 
