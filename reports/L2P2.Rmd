@@ -1,5 +1,5 @@
 ---
-title: "L2P2"
+title: "L2P2 - Sessões, buscas e navegação na wikimedia"
 author: "Erick Santana Rodrigues"
 output:
   prettydoc::html_pretty:
@@ -28,64 +28,178 @@ knitr::opts_chunk$set(tidy = FALSE,
                       message = FALSE)
 
 buscas = read_csv(here::here("data/search_data.csv.1"))
+buscas$session_start_date = as.Date(buscas$session_start_date, format = "%Y/%m/%d/")
+```
+#1 Visão geral
+
+Nessa análise usaremos dados sobre padrões de buscas e navegação em páginas de projetos da wikimedia. Vamo dar uma olhada nos dados:
+
+```{r}
+buscas$session_start_timestamp <- NULL
+head(buscas %>% arrange(session_id))
 ```
 
-##What is our daily overall clickthrough rate? How does it vary between the groups?
+Nosso dataframe conta com 9 variáveis, sendo elas:
+
+- session_id: Um id identificando sessões individuais.
+- search_index: Um contador de buscas em uma mesma sessão ordenado cronologicamente.
+- session_start_date: A data em que a busca foi feita.
+- group: O grupo "a" ou "b".
+- results: A quantidade de resultados que a busca retornou.
+- num_clicks:  O número de páginas que o usuário visitou a partir da busca.
+- first_click: A posição do link da página visitada no mecanismo de busca de páginas.
+- session_length: A duração em segundos da sessão.
+
+Através de uma análise exploratória rápida podemos ter uma ideia da quantidade e do comportamento dos dados que estamos lidando. Vamos analisar a quantidade de clicks em cada sessão por grupo, ignorando sessões com duração 0.
 
 ```{r}
 buscas %>%
-    group_by(date = substr(session_start_date, 1, 10), group) %>%
-    mutate(mean_clicks = mean(num_clicks)) %>%
-    ggplot(aes(x = date, y = mean_clicks, color = group, group = group)) +
-    geom_point(show.legend = FALSE) +
-    geom_line() +
-    labs(title = "Daily clickthrough rate", x = "", y = "clickthrough rate") +
-    theme(axis.text.x = element_text(hjust = 1, angle = 45))
+    filter(session_length > 0) %>%
+    group_by(session_id) %>%
+    summarise(num_clicks = sum(num_clicks), group = first(group)) %>%
+    ggplot(aes(x = group, y = num_clicks, group = group, color = group)) +
+    geom_boxplot(show.legend = FALSE) +
+    scale_y_log10()
 ```
 
-##Which results do people tend to try first? How does it change day-to-day?
+Podemos ver que a mediana para ambos os grupos é de 1 clique em cada sessão, porém existem alguns valores muito altos para essa quantidade (outliers) o que pode interferir no valor da média. É possível observar também os dados em a são mais espaçados e possivelmente estão em maior quantidade.
 
 ```{r}
 buscas %>%
-    filter(first_click < 20) %>%
-    group_by(date = substr(session_start_date, 1, 10)) %>%
-    ggplot(aes(x = first_click)) +
-    geom_bar()
+    group_by(group) %>%
+    summarise(numberGroup = n())
 ```
 
-```{r}
-#95% percentil, desvio padrão
+O grupo 'a' tem pouco mais que o dobro de dados que o grupo 'b'. Agora vamos observar a quantidade de resultados de cada sessão.
 
+```{r}
 buscas %>%
-    summary(first_click)
+    filter(session_length > 0) %>%
+    group_by(session_id) %>%
+    summarise(qtd_results = sum(results), session_length = first(session_length)) %>%
+    ggplot(aes(qtd_results, session_length)) +
+    geom_point() +
+    scale_x_log10() +
+    scale_y_log10()
     
+```
+
+Traçando um gráfico entre a quantidade de resultados de cada sessão e  o tamanho da sessão (ignorando aquelas com duração 0), não conseguimos enxergar uma relação com muita clareza. Se calcularmos a correlação entre essas duas variáveis veremos que ela é fraca.
+
+```{r}
+
+correlation = buscas %>%
+    filter(session_length > 0) %>%
+    group_by(session_id) %>%
+    summarise(qtd_results = sum(results), session_length = first(session_length))
+    
+correlation %>% 
+    summarise(pearson  = cor(qtd_results, session_length, method = "pearson"),
+              spearman = cor(qtd_results, session_length, method = "spearman"),
+              kendall  = cor(qtd_results, session_length, method = "kendall"))
 
 ```
 
+#2 Perguntas
 
-##What is our daily overall zero results rate? How does it vary between the groups?
+Após uma pequena análise exploratória para conhecer os dados que estamos usando, vamos responder algumas perguntas sobre eles.
+
+##2.1 Qual é a taxa de cliques geral diária? Como isso varia entre os grupos?
+
+Iremos calcular a quantidade de cliques por sessão e então dividiremos esse valor pelo número total de sessões, desconsiderando aquelas em que não houveram cliques.
 
 ```{r}
-buscas %>%
-    group_by(date = substr(session_start_date, 1, 10), group) %>%
-    summarise(mean_zero = mean(results == 0)) %>%
-    ggplot(aes(x = date, y = mean_zero, color = group, group = group)) +
-    geom_point(show.legend = FALSE) +
+buscasSessao <- buscas %>%
+    group_by(session_id, group) %>%
+        summarise(session_length = first(session_length), 
+              date = first(session_start_date),
+              sum_clicks = sum(num_clicks))
+
+buscasSessao %>%
+    group_by(date, group) %>%
+    summarise(click_rate = round(mean(sum_clicks > 0),2)) %>%
+    ggplot(aes(x = date, y = click_rate * 100, group = group, color = group)) +
+    geom_point() +
     geom_line(show.legend = FALSE) +
-    labs(title = "Daily overall zero results rate", x = "", y = "zero results %") +
+    labs(title = "Daily clickthrough rate", x = "", y = "clickthrough rate (%)") +
     theme(axis.text.x = element_text(hjust = 1, angle = 45)) +
     facet_wrap(~group)
 ```
 
-##Let session length be approximately the time between the first event and the last event in a session. Choose a variable from the dataset and describe its relationship to session length. Visualize the relationship.
+Agrupando a taxa de cliques por sessão e desconsiderando sessões em que não houveram cliques, podemos ver que para o grupo 'a' possui uma taxa de cliques muito maior que o grupo 'b', que não passa dos 20%.
+
+##2.2 Quais resultados as pessoas tendem a tentar primeiro? Como isso muda no dia-a-dia?
+
+Iremos desconsiderar os casos onde a posição do link da página visitada é maior que 25, isso pois a incidência de cliques é bem baixa como podemos ver a seguir.
 
 ```{r}
 
-buscas %>%
-    filter(session_length != 0) %>%
-    group_by(date = substr(session_start_date, 1, 10)) %>%
-    ggplot(aes(x = session_length, y = search_index)) +
-    geom_point()
-
+head(buscas %>%
+    filter(first_click >= 25) %>%
+    group_by(first_click) %>%
+    summarise(count = n()))
 ```
+
+Traçando um gráfico de barras, podemos ver que, no geral, a grande maioria das pessoas clica no primeiro link, enquanto que o outros valores estão muito abaixo.
+
+```{r}
+buscas %>%
+    filter(first_click <= 25) %>%
+    ggplot(aes(x = first_click, fill = "#FF6666")) +
+    geom_bar(show.legend = FALSE) +
+    labs(title = "Results people tend to try",x = "first click")
+```
+
+Para fazer a mesma análise, porém considerando no dia-a-dia, teremos que usar outro valor como medida visto que se usarmos valores dos 50% percentil dos dados ou menos, a grande maioria dos valores será a mesma para todos os dias e nossa visualização não mostrará muita coisa. Vamos utilizar o 95% percentil.
+
+```{r}
+buscas %>%
+    group_by(date = session_start_date) %>%
+    summarise(percentil = quantile(first_click, c(.95), na.rm = TRUE)) %>%
+    ggplot(aes(x = date, y = percentil)) +
+    geom_line() +
+    geom_point()
+```
+
+Podemos ver uma variação considerável entre os dias, para o 95% percentil, sendo o dia 04 de março aquele com o maior valor.
+
+##2.3 Qual é a taxa diária de resultados zero no geral? Como isso varia entre os grupos?
+
+Para responder essa pergunta, vamos traçar um gráfico entre os dias e a média dos resultados 0, ao dividir por grupos teremos uma visualização que responderá a pergunta.
+
+```{r}
+buscas %>%
+    group_by(date = session_start_date, group) %>%
+    mutate(mean_zero = round(mean(results == 0), 2) * 100) %>%
+    ggplot(aes(x = date, y = mean_zero, group = group, color = group)) +
+    geom_point(show.legend = FALSE) +
+    geom_line(show.legend = FALSE) +
+    labs(title = "Daily overall zero results rate", x = "", y = "zero results (%)") +
+    theme(axis.text.x = element_text(hjust = 1, angle = 45)) +
+    facet_wrap(~group)
+```
+
+Podemos ver que os gráficos são idênticos de 04 de março para trás, porém desse dia em diante as taxas de resultado 0 mudam para os grupos. O grupo tem as menores taxas, chegando a 17% das buscas retornando zero. O maior valor, para ambos os grupos, foi de 20%.
+
+##2.4 Escolha uma variável do conjunto de dados e descreva sua relação com o tamanho da sessão. Visualize o relacionamento.
+
+Vamos analisar a relação entre o tamanho de uma sessão e a quantidade de cliques que ocorrem nela.
+
+```{r}
+buscasSessao %>%
+    ggplot(aes(session_length, sum_clicks, color = group)) +
+    geom_point(alpha = .2, show.legend = FALSE) +
+    scale_x_log10() +
+    facet_wrap(~group)
+```
+
+Podemos observar que não há uma relação clara entre essas variáveis, independente do tamanho da sessão o número de cliques sempre tende a ser baixo, porém ao separarmos em grupos vemos a presença de muitos outliers no grupo 'a'. Abaixo calculamos as correlações entre essas variáveis. 
+```{r}
+buscasSessao %>% 
+    group_by(group) %>%
+    summarise(pearson  = cor(session_length, sum_clicks, method = "pearson"),
+              spearman = cor(session_length, sum_clicks, method = "spearman"),
+              kendall  = cor(session_length, sum_clicks, method = "kendall"))
+```
+
 
